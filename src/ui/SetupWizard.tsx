@@ -75,13 +75,38 @@ export function SetupWizard(props: SetupWizardProps) {
   const [saveResult, setSaveResult] = useState<SaveConfigResult | null>(null);
 
   const saveConfig = usePluginAction("save-config");
-  const { data: projectsData } = usePluginData<{ items: JiraProjectItem[] }>("jira-projects", {});
+  const [connectionSaved, setConnectionSaved] = useState(false);
+
+  // Only fetch projects after connection credentials have been saved (end of step 1)
+  const { data: projectsData } = usePluginData<{ items: JiraProjectItem[] }>(
+    connectionSaved ? "jira-projects" : "",
+    {},
+  );
 
   const update = useCallback((patch: Partial<WizardState>) => {
     setState((s) => ({ ...s, ...patch }));
   }, []);
 
-  const goNext = () => update({ step: state.step + 1 });
+  const goNext = async () => {
+    // Save connection credentials when leaving step 1 so project fetch works
+    if (state.step === 1) {
+      try {
+        await saveConfig({
+          deploymentMode: state.deploymentMode,
+          baseUrl: state.baseUrl,
+          authMethod: state.authMethod,
+          cloudId: state.cloudId,
+          oauthClientId: state.oauthClientId,
+          apiTokenRef: state.apiTokenRef,
+          apiUserEmail: state.apiUserEmail,
+        });
+        setConnectionSaved(true);
+      } catch {
+        // Connection save failed — still allow proceeding, projects may be empty
+      }
+    }
+    update({ step: state.step + 1 });
+  };
   const goBack = () => update({ step: state.step - 1 });
 
   const handleSave = async () => {

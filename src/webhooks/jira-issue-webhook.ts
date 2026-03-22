@@ -232,6 +232,19 @@ async function handleIssueUpdated(
 
   const entity = entities[0]!;
 
+  // Idempotency: skip if we already processed this changelog
+  const changelogId = payload.changelog?.id;
+  if (changelogId) {
+    const entityData = entity.data as Record<string, unknown> | undefined;
+    if (entityData?.lastChangelogId === changelogId) {
+      ctx.logger.debug("Duplicate webhook delivery — skipping", {
+        issueKey: issue.key,
+        changelogId,
+      });
+      return;
+    }
+  }
+
   // If entity is not linked to a Paperclip issue yet, just update tracking data
   if (!entity.scopeId) {
     ctx.logger.debug("Tracked entity has no linked Paperclip issue — updating tracking only", {

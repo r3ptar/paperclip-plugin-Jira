@@ -9,6 +9,7 @@ import {
   TOOL_NAMES,
   WEBHOOK_KEYS,
 } from "./constants.js";
+import { TOOL_SCHEMAS } from "./tool-schemas.js";
 
 const manifest: PaperclipPluginManifestV1 = {
   id: PLUGIN_ID,
@@ -189,202 +190,91 @@ const manifest: PaperclipPluginManifestV1 = {
       name: TOOL_NAMES.jiraSearch,
       displayName: "Jira Search",
       description: "Search Jira issues using JQL. Returns matching issues with key, summary, and status.",
-      parametersSchema: {
-        type: "object",
-        properties: {
-          jql: { type: "string", description: "JQL query string" },
-          maxResults: { type: "number", description: "Maximum results (default: 50)" },
-          fields: { type: "array", items: { type: "string" }, description: "Fields to include" },
-        },
-        required: ["jql"],
-      },
+      parametersSchema: TOOL_SCHEMAS[TOOL_NAMES.jiraSearch],
     },
     {
       name: TOOL_NAMES.jiraGetIssue,
       displayName: "Jira Get Issue",
       description: "Get a Jira issue by ID or key. Returns issue details including status, assignee, and fields.",
-      parametersSchema: {
-        type: "object",
-        properties: {
-          issueIdOrKey: { type: "string", description: "Issue ID or key (e.g. PROJ-123)" },
-          fields: { type: "array", items: { type: "string" }, description: "Fields to include" },
-        },
-        required: ["issueIdOrKey"],
-      },
+      parametersSchema: TOOL_SCHEMAS[TOOL_NAMES.jiraGetIssue],
     },
     {
       name: TOOL_NAMES.jiraCreateIssue,
       displayName: "Jira Create Issue",
       description: "Create a new Jira issue with summary, type, and optional fields.",
-      parametersSchema: {
-        type: "object",
-        properties: {
-          projectKey: { type: "string", description: "Project key (e.g. PROJ)" },
-          summary: { type: "string", description: "Issue title" },
-          issueType: { type: "string", description: "Issue type name (e.g. Task, Bug, Story)" },
-          description: { type: "string", description: "Issue description" },
-          priority: { type: "string", description: "Priority name (e.g. High, Medium, Low)" },
-          labels: { type: "array", items: { type: "string" }, description: "Labels" },
-          assigneeAccountId: { type: "string", description: "Jira account ID to assign" },
-        },
-        required: ["projectKey", "summary", "issueType"],
-      },
+      parametersSchema: TOOL_SCHEMAS[TOOL_NAMES.jiraCreateIssue],
     },
     {
       name: TOOL_NAMES.jiraUpdateIssue,
       displayName: "Jira Update Issue",
       description: "Update fields on an existing Jira issue.",
-      parametersSchema: {
-        type: "object",
-        properties: {
-          issueIdOrKey: { type: "string", description: "Issue ID or key" },
-          summary: { type: "string", description: "New summary" },
-          description: { type: "string", description: "New description" },
-          priority: { type: "string", description: "New priority name" },
-          labels: { type: "array", items: { type: "string" }, description: "New labels" },
-        },
-        required: ["issueIdOrKey"],
-      },
+      parametersSchema: TOOL_SCHEMAS[TOOL_NAMES.jiraUpdateIssue],
     },
     {
       name: TOOL_NAMES.jiraTransitionIssue,
       displayName: "Jira Transition Issue",
       description: "Execute a workflow transition on a Jira issue. Use jira-list-transitions to find available transition IDs.",
-      parametersSchema: {
-        type: "object",
-        properties: {
-          issueIdOrKey: { type: "string", description: "Issue ID or key" },
-          transitionId: { type: "string", description: "Transition ID (from jira-list-transitions)" },
-          comment: { type: "string", description: "Optional comment during transition" },
-          resolution: { type: "string", description: "Resolution name (e.g. Done, Won't Do)" },
-        },
-        required: ["issueIdOrKey", "transitionId"],
-      },
+      parametersSchema: TOOL_SCHEMAS[TOOL_NAMES.jiraTransitionIssue],
     },
     {
       name: TOOL_NAMES.jiraAddComment,
       displayName: "Jira Add Comment",
       description: "Add a comment to a Jira issue.",
-      parametersSchema: {
-        type: "object",
-        properties: {
-          issueIdOrKey: { type: "string", description: "Issue ID or key" },
-          body: { type: "string", description: "Comment text" },
-        },
-        required: ["issueIdOrKey", "body"],
-      },
+      parametersSchema: TOOL_SCHEMAS[TOOL_NAMES.jiraAddComment],
     },
     {
       name: TOOL_NAMES.jiraListProjects,
       displayName: "Jira List Projects",
       description: "List Jira projects visible to the authenticated user.",
-      parametersSchema: {
-        type: "object",
-        properties: {
-          maxResults: { type: "number", description: "Maximum results (default: 50)" },
-        },
-      },
+      parametersSchema: TOOL_SCHEMAS[TOOL_NAMES.jiraListProjects],
     },
     {
       name: TOOL_NAMES.jiraGetProject,
       displayName: "Jira Get Project",
       description: "Get details of a Jira project by ID or key.",
-      parametersSchema: {
-        type: "object",
-        properties: {
-          projectIdOrKey: { type: "string", description: "Project ID or key" },
-        },
-        required: ["projectIdOrKey"],
-      },
+      parametersSchema: TOOL_SCHEMAS[TOOL_NAMES.jiraGetProject],
     },
     {
       name: TOOL_NAMES.jiraListBoards,
       displayName: "Jira List Boards",
       description: "List Jira boards, optionally filtered by project or type.",
-      parametersSchema: {
-        type: "object",
-        properties: {
-          projectKeyOrId: { type: "string", description: "Filter by project" },
-          type: { type: "string", enum: ["scrum", "kanban", "simple"], description: "Board type filter" },
-        },
-      },
+      parametersSchema: TOOL_SCHEMAS[TOOL_NAMES.jiraListBoards],
     },
     {
       name: TOOL_NAMES.jiraGetSprint,
       displayName: "Jira Get Sprints",
       description: "List sprints for a board, optionally filtered by state.",
-      parametersSchema: {
-        type: "object",
-        properties: {
-          boardId: { type: "number", description: "Board ID" },
-          state: { type: "string", enum: ["active", "closed", "future"], description: "Sprint state filter" },
-        },
-        required: ["boardId"],
-      },
+      parametersSchema: TOOL_SCHEMAS[TOOL_NAMES.jiraGetSprint],
     },
     {
       name: TOOL_NAMES.jiraMoveToSprint,
       displayName: "Jira Move to Sprint",
       description: "Move one or more issues into a sprint.",
-      parametersSchema: {
-        type: "object",
-        properties: {
-          sprintId: { type: "number", description: "Target sprint ID" },
-          issueIds: { type: "array", items: { type: "string" }, description: "Issue IDs or keys to move" },
-        },
-        required: ["sprintId", "issueIds"],
-      },
+      parametersSchema: TOOL_SCHEMAS[TOOL_NAMES.jiraMoveToSprint],
     },
     {
       name: TOOL_NAMES.jiraAssignIssue,
       displayName: "Jira Assign Issue",
       description: "Assign or unassign a Jira issue. Omit accountId to unassign.",
-      parametersSchema: {
-        type: "object",
-        properties: {
-          issueIdOrKey: { type: "string", description: "Issue ID or key" },
-          accountId: { type: "string", description: "Jira account ID (omit to unassign)" },
-        },
-        required: ["issueIdOrKey"],
-      },
+      parametersSchema: TOOL_SCHEMAS[TOOL_NAMES.jiraAssignIssue],
     },
     {
       name: TOOL_NAMES.jiraLinkIssues,
       displayName: "Jira Link Issues",
       description: "Create a link between two Jira issues.",
-      parametersSchema: {
-        type: "object",
-        properties: {
-          inwardIssue: { type: "string", description: "Inward issue key (e.g. PROJ-1)" },
-          outwardIssue: { type: "string", description: "Outward issue key (e.g. PROJ-2)" },
-          linkType: { type: "string", description: "Link type (e.g. Blocks, Relates, Clones)" },
-        },
-        required: ["inwardIssue", "outwardIssue", "linkType"],
-      },
+      parametersSchema: TOOL_SCHEMAS[TOOL_NAMES.jiraLinkIssues],
     },
     {
       name: TOOL_NAMES.jiraListTransitions,
       displayName: "Jira List Transitions",
       description: "List available workflow transitions for an issue. Use this before transitioning an issue.",
-      parametersSchema: {
-        type: "object",
-        properties: {
-          issueIdOrKey: { type: "string", description: "Issue ID or key" },
-        },
-        required: ["issueIdOrKey"],
-      },
+      parametersSchema: TOOL_SCHEMAS[TOOL_NAMES.jiraListTransitions],
     },
     {
       name: TOOL_NAMES.jiraGetUser,
       displayName: "Jira Get User",
       description: "Look up a Jira user by account ID or email address.",
-      parametersSchema: {
-        type: "object",
-        properties: {
-          accountId: { type: "string", description: "Jira account ID" },
-          emailAddress: { type: "string", description: "Email address to search" },
-        },
-      },
+      parametersSchema: TOOL_SCHEMAS[TOOL_NAMES.jiraGetUser],
     },
   ],
 

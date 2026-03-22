@@ -44,6 +44,7 @@ interface TrackedEntityData {
   jiraIssueKey: string;
   jiraStatusName: string;
   lastSyncedAt: string;
+  lastWebhookAt?: string;
 }
 
 /** Shape returned by ctx.entities.list(). */
@@ -116,8 +117,23 @@ export class ReconciliationService {
         return result;
       }
 
+      // Incremental reconciliation: only fetch issues updated since last run
+      let jql = this.config.syncJql;
+      const lastReconcileAt = await this.ctx.state.get({
+        scopeKind: "instance",
+        stateKey: STATE_KEYS.lastReconcileAt,
+      }) as string | null;
+
+      if (lastReconcileAt) {
+        // Jira JQL date format: "yyyy-MM-dd HH:mm"
+        const since = new Date(lastReconcileAt);
+        const jqlDate = `${since.getFullYear()}-${String(since.getMonth() + 1).padStart(2, "0")}-${String(since.getDate()).padStart(2, "0")} ${String(since.getHours()).padStart(2, "0")}:${String(since.getMinutes()).padStart(2, "0")}`;
+        jql = `(${this.config.syncJql}) AND updated >= "${jqlDate}"`;
+        this.ctx.logger.info("Incremental reconciliation", { since: jqlDate });
+      }
+
       const jiraIssues = await this.searchService.searchAllIssues(
-        this.config.syncJql,
+        jql,
         ["summary", "status", "updated", "assignee"],
       );
 
@@ -199,6 +215,18 @@ export class ReconciliationService {
         try {
           const jiraIssue = jiraIssuesByKey.get(key)!;
           const tracked = entityByJiraKey.get(key)!;
+
+          // Race guard: skip issues that received a webhook update after
+          // this reconciliation started — the webhook data is fresher
+          const lastWebhookAt = tracked.data.lastWebhookAt;
+          if (lastWebhookAt && new Date(lastWebhookAt).getTime() > startTime) {
+            this.ctx.logger.debug("Skipping issue — webhook update is newer than reconciliation start", {
+              key,
+              lastWebhookAt,
+            });
+            result.synced += 1;
+            continue;
+          }
 
           // Map current Jira status to Paperclip status
           const currentJiraPaperclipStatus = mapJiraStatusToPaperclip(

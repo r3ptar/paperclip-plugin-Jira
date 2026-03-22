@@ -121,9 +121,18 @@ describe("ApiTokenManager", () => {
   });
 
   it("healthCheck returns ok: true on success", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal("fetch", mockFetch);
+
     const manager = new ApiTokenManager(ctx, apiTokenConfig);
     const health = await manager.healthCheck();
     expect(health).toEqual({ ok: true });
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining("/rest/api/3/myself"),
+      expect.objectContaining({ method: "GET" }),
+    );
+
+    vi.unstubAllGlobals();
   });
 
   it("healthCheck returns ok: false with error message on failure", async () => {
@@ -183,9 +192,18 @@ describe("PatTokenManager", () => {
   });
 
   it("healthCheck returns ok: true on success", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal("fetch", mockFetch);
+
     const manager = new PatTokenManager(ctx, patConfig);
     const health = await manager.healthCheck();
     expect(health).toEqual({ ok: true });
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining("/rest/api/2/myself"),
+      expect.objectContaining({ method: "GET" }),
+    );
+
+    vi.unstubAllGlobals();
   });
 });
 

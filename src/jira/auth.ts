@@ -142,6 +142,11 @@ export class ApiTokenManager implements TokenManager {
     private readonly config: JiraApiTokenConfig,
   ) {}
 
+  /** Build the Authorization header value for a real API test call. */
+  private buildAuthHeader(token: AuthToken): string {
+    return token.type === "basic" ? `Basic ${token.token}` : `Bearer ${token.token}`;
+  }
+
   async getToken(): Promise<AuthToken> {
     if (this.cachedToken) {
       return { token: this.cachedToken, type: "basic" };
@@ -163,7 +168,16 @@ export class ApiTokenManager implements TokenManager {
 
   async healthCheck(): Promise<{ ok: boolean; error?: string }> {
     try {
-      await this.forceRefresh();
+      const token = await this.forceRefresh();
+      // Make a real API call to verify the credential works
+      const url = `${this.config.siteUrl}/rest/api/3/myself`;
+      const res = await fetch(url, {
+        method: "GET",
+        headers: { Authorization: this.buildAuthHeader(token), Accept: "application/json" },
+      });
+      if (!res.ok) {
+        return { ok: false, error: `API token validation failed: HTTP ${res.status}` };
+      }
       return { ok: true };
     } catch (err) {
       return {
@@ -190,6 +204,10 @@ export class PatTokenManager implements TokenManager {
     private readonly config: JiraPatConfig,
   ) {}
 
+  private buildAuthHeader(token: AuthToken): string {
+    return `Bearer ${token.token}`;
+  }
+
   async getToken(): Promise<AuthToken> {
     if (this.cachedToken) {
       return { token: this.cachedToken, type: "bearer" };
@@ -207,7 +225,17 @@ export class PatTokenManager implements TokenManager {
 
   async healthCheck(): Promise<{ ok: boolean; error?: string }> {
     try {
-      await this.forceRefresh();
+      const token = await this.forceRefresh();
+      // Make a real API call to verify the PAT works
+      // Server/DC uses /rest/api/2
+      const url = `${this.config.siteUrl}/rest/api/2/myself`;
+      const res = await fetch(url, {
+        method: "GET",
+        headers: { Authorization: this.buildAuthHeader(token), Accept: "application/json" },
+      });
+      if (!res.ok) {
+        return { ok: false, error: `PAT validation failed: HTTP ${res.status}` };
+      }
       return { ok: true };
     } catch (err) {
       return {

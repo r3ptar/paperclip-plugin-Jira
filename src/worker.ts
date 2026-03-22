@@ -19,6 +19,7 @@ import {
   type JiraConfig,
   type PaperclipIssueStatus,
 } from "./constants.js";
+import { TOOL_SCHEMAS } from "./tool-schemas.js";
 import { createTokenManager } from "./jira/auth.js";
 import { JiraHttpClient } from "./jira/client.js";
 import type { TokenManager, JiraClient, JiraAuthConfig } from "./jira/types.js";
@@ -46,19 +47,21 @@ import { handleJiraAssignIssue } from "./tools/jira-assign-issue.js";
 import { handleJiraLinkIssues } from "./tools/jira-link-issues.js";
 import { handleJiraListTransitions } from "./tools/jira-list-transitions.js";
 import { handleJiraGetUser } from "./tools/jira-get-user.js";
+import type { ServiceContainer } from "./service-container.js";
 
 // ── Module-level state ───────────────────────────────────────────────────────
+//
+// Only two mutable references survive at module scope:
+//  - `pluginCtx`  — the SDK context singleton (set once during setup)
+//  - `services`   — an immutable ServiceContainer that is atomically swapped
+//                   whenever configuration changes.
+//
+// Every async handler captures `services` into a local `const svc` on its
+// first line.  This guarantees that a concurrent `onConfigChanged` cannot
+// alter the container used by an in-flight operation.
 
 let pluginCtx: PluginContext | null = null;
-let tokenManager: TokenManager | null = null;
-let jiraClient: JiraClient | null = null;
-let identityService: AgentIdentityService | null = null;
-let issueService: JiraIssueService | null = null;
-let projectService: JiraProjectService | null = null;
-let searchService: JiraSearchService | null = null;
-let userService: JiraUserService | null = null;
-let boardService: JiraBoardService | null = null;
-let sprintService: JiraSprintService | null = null;
+let services: ServiceContainer | null = null;
 
 // ── Config ───────────────────────────────────────────────────────────────────
 
@@ -71,22 +74,15 @@ async function getConfig(ctx: PluginContext): Promise<JiraConfig> {
   return { ...DEFAULT_CONFIG, ...(raw as Partial<JiraConfig>), ...(stateConfig ?? {}) };
 }
 
-// ── Service Initialization ───────────────────────────────────────────────────
+// ── Service Container Builder ───────────────────────────────────────────────
 
-async function initServices(ctx: PluginContext, config: JiraConfig): Promise<void> {
-  tokenManager = null;
-  jiraClient = null;
-  identityService = null;
-  issueService = null;
-  projectService = null;
-  searchService = null;
-  userService = null;
-  boardService = null;
-  sprintService = null;
-
+async function buildContainer(
+  ctx: PluginContext,
+  config: JiraConfig,
+): Promise<ServiceContainer | null> {
   if (!config.baseUrl) {
     ctx.logger.warn("Jira plugin: base URL not configured");
-    return;
+    return null;
   }
 
   // Resolve OAuth2 refresh token from state (stored by persister on rotation)
@@ -112,7 +108,7 @@ async function initServices(ctx: PluginContext, config: JiraConfig): Promise<voi
   const authConfig = buildAuthConfig(config, resolvedRefreshToken);
   if (!authConfig) {
     ctx.logger.warn("Jira plugin: authentication not configured");
-    return;
+    return null;
   }
 
   // OAuth2 requires a persister to save rotated refresh tokens
@@ -125,10 +121,10 @@ async function initServices(ctx: PluginContext, config: JiraConfig): Promise<voi
       }
     : undefined;
 
-  tokenManager = createTokenManager(ctx, authConfig, persister);
+  const tokenManager = createTokenManager(ctx, authConfig, persister);
   const defaultApiVersion = config.deploymentMode === "cloud" ? "cloud" as const : "server" as const;
 
-  jiraClient = new JiraHttpClient({
+  const client = new JiraHttpClient({
     ctx,
     tokenManager,
     siteUrl: config.baseUrl,
@@ -136,23 +132,35 @@ async function initServices(ctx: PluginContext, config: JiraConfig): Promise<voi
     serviceName: "jira",
   });
 
-  identityService = new AgentIdentityService(config);
-  issueService = new JiraIssueService(ctx, jiraClient, config);
-  projectService = new JiraProjectService(ctx, jiraClient);
-  searchService = new JiraSearchService(ctx, jiraClient);
-  userService = new JiraUserService(ctx, jiraClient);
+  const identity = new AgentIdentityService(config);
+  const issues = new JiraIssueService(ctx, client, config);
+  const projects = new JiraProjectService(ctx, client);
+  const search = new JiraSearchService(ctx, client);
+  const users = new JiraUserService(ctx, client);
 
-  if (config.enableBoards) {
-    boardService = new JiraBoardService(ctx, jiraClient);
-  }
+  const boards = config.enableBoards
+    ? new JiraBoardService(ctx, client)
+    : null;
 
-  if (config.enableSprints) {
-    sprintService = new JiraSprintService(ctx, jiraClient);
-  }
+  const sprints = config.enableSprints
+    ? new JiraSprintService(ctx, client)
+    : null;
+
+  return {
+    tokenManager,
+    client,
+    identity,
+    issues,
+    projects,
+    search,
+    users,
+    boards,
+    sprints,
+  };
 }
 
 // buildAuthConfig is sync — for OAuth2, the refresh token is resolved
-// asynchronously in initServices before calling this.
+// asynchronously in buildContainer before calling this.
 function buildAuthConfig(config: JiraConfig, resolvedRefreshToken?: string): JiraAuthConfig | null {
   switch (config.authMethod) {
     case "oauth2":
@@ -189,10 +197,11 @@ function buildAuthConfig(config: JiraConfig, resolvedRefreshToken?: string): Jir
 
 async function registerEventHandlers(ctx: PluginContext): Promise<void> {
   ctx.events.on("issue.created", async (event: PluginEvent) => {
-    if (!event.companyId) return;
+    const svc = services;
+    if (!event.companyId || !svc) return;
     const config = await getConfig(ctx);
 
-    if (!config.enableIssueSync || !issueService) return;
+    if (!config.enableIssueSync) return;
 
     const payload = event.payload as { issueId?: string };
     if (!payload.issueId) return;
@@ -201,7 +210,7 @@ async function registerEventHandlers(ctx: PluginContext): Promise<void> {
     if (!issue) return;
 
     try {
-      const jiraIssue = await issueService.createIssue({
+      const jiraIssue = await svc.issues.createIssue({
         projectKey: config.projectKey,
         summary: issue.title,
         issueType: "Task",
@@ -232,10 +241,11 @@ async function registerEventHandlers(ctx: PluginContext): Promise<void> {
   });
 
   ctx.events.on("issue.updated", async (event: PluginEvent) => {
-    if (!event.companyId) return;
+    const svc = services;
+    if (!event.companyId || !svc) return;
     const config = await getConfig(ctx);
 
-    if (!config.enableIssueSync || !issueService) return;
+    if (!config.enableIssueSync) return;
 
     const payload = event.payload as { issueId?: string };
     if (!payload.issueId) return;
@@ -257,7 +267,7 @@ async function registerEventHandlers(ctx: PluginContext): Promise<void> {
     if (!entityData?.jiraIssueKey) return;
 
     try {
-      await issueService.updateIssue(entityData.jiraIssueKey, {
+      await svc.issues.updateIssue(entityData.jiraIssueKey, {
         summary: issue.title,
       });
       await ctx.metrics.write("jira.issue.updated", 1);
@@ -275,13 +285,14 @@ async function registerEventHandlers(ctx: PluginContext): Promise<void> {
 
 async function registerJobs(ctx: PluginContext): Promise<void> {
   ctx.jobs.register(JOB_KEYS.jiraReconcile, async (_job: PluginJobContext) => {
+    const svc = services;
     const config = await getConfig(ctx);
-    if (!config.enableIssueSync || !issueService || !searchService) {
+    if (!config.enableIssueSync || !svc) {
       ctx.logger.info("Jira reconciliation skipped — not enabled");
       return;
     }
 
-    const reconciler = new ReconciliationService(ctx, issueService, searchService, config);
+    const reconciler = new ReconciliationService(ctx, svc.issues, svc.search, config);
 
     // Paginate through all companies
     let totalSynced = 0;
@@ -305,9 +316,10 @@ async function registerJobs(ctx: PluginContext): Promise<void> {
   });
 
   ctx.jobs.register(JOB_KEYS.tokenHealthCheck, async (_job: PluginJobContext) => {
-    if (!tokenManager) return;
+    const svc = services;
+    if (!svc) return;
 
-    const result = await tokenManager.healthCheck();
+    const result = await svc.tokenManager.healthCheck();
     await ctx.state.set(
       { scopeKind: "instance", stateKey: STATE_KEYS.syncHealth },
       { tokenHealthy: result.ok, checkedAt: new Date().toISOString() },
@@ -394,9 +406,10 @@ async function registerDataHandlers(ctx: PluginContext): Promise<void> {
   });
 
   ctx.data.register("jira-projects", async () => {
-    if (!projectService) return { error: "Jira not connected" };
+    const svc = services;
+    if (!svc) return { error: "Jira not connected" };
     try {
-      const projects = await projectService.listProjects(100);
+      const projects = await svc.projects.listProjects(100);
       return {
         items: projects.map((p) => ({ id: p.id, key: p.key, name: p.name })),
       };
@@ -406,11 +419,12 @@ async function registerDataHandlers(ctx: PluginContext): Promise<void> {
   });
 
   ctx.data.register("jira-statuses", async (params) => {
-    if (!projectService) return { error: "Jira not connected" };
+    const svc = services;
+    if (!svc) return { error: "Jira not connected" };
     const projectKey = typeof params.projectKey === "string" ? params.projectKey : "";
     if (!projectKey) return { error: "projectKey is required" };
     try {
-      const statuses = await projectService.getStatuses(projectKey);
+      const statuses = await svc.projects.getStatuses(projectKey);
       return {
         items: statuses.map((s) => ({
           id: s.id,
@@ -444,19 +458,21 @@ async function registerDataHandlers(ctx: PluginContext): Promise<void> {
 
 async function registerActionHandlers(ctx: PluginContext): Promise<void> {
   ctx.actions.register("test-connection", async () => {
-    if (!tokenManager) {
+    const svc = services;
+    if (!svc) {
       return { ok: false, error: "Jira credentials not configured" };
     }
-    const result = await tokenManager.healthCheck();
+    const result = await svc.tokenManager.healthCheck();
     return { ok: result.ok, error: result.ok ? null : result.error ?? "Failed to authenticate" };
   });
 
   ctx.actions.register("trigger-reconcile", async () => {
+    const svc = services;
     const config = await getConfig(ctx);
-    if (!config.enableIssueSync || !issueService || !searchService) {
+    if (!config.enableIssueSync || !svc) {
       return { ok: false, error: "Issue sync not enabled" };
     }
-    const reconciler = new ReconciliationService(ctx, issueService, searchService, config);
+    const reconciler = new ReconciliationService(ctx, svc.issues, svc.search, config);
 
     const allStats = [];
     let offset = 0;
@@ -518,7 +534,7 @@ async function registerActionHandlers(ctx: PluginContext): Promise<void> {
     const merged = { ...DEFAULT_CONFIG, ...sanitized } as JiraConfig;
 
     await ctx.state.set({ scopeKind: "instance", stateKey: "plugin-config" }, merged);
-    await initServices(ctx, merged);
+    services = await buildContainer(ctx, merged);
 
     return { ok: true };
   });
@@ -530,136 +546,151 @@ async function registerToolHandlers(ctx: PluginContext): Promise<void> {
   ctx.tools.register(TOOL_NAMES.jiraSearch, {
     displayName: "Jira Search",
     description: "Search Jira issues using JQL.",
-    parametersSchema: { type: "object", properties: { jql: { type: "string" } }, required: ["jql"] },
+    parametersSchema: TOOL_SCHEMAS[TOOL_NAMES.jiraSearch],
   }, async (params, runCtx): Promise<ToolResult> => {
-    if (!searchService) return { error: "Jira not connected" };
-    return handleJiraSearch(params, runCtx, searchService);
+    const svc = services;
+    if (!svc) return { error: "Jira not connected" };
+    return handleJiraSearch(params, runCtx, svc.search);
   });
 
   ctx.tools.register(TOOL_NAMES.jiraGetIssue, {
     displayName: "Jira Get Issue",
     description: "Get a Jira issue by ID or key.",
-    parametersSchema: { type: "object", properties: { issueIdOrKey: { type: "string" } }, required: ["issueIdOrKey"] },
+    parametersSchema: TOOL_SCHEMAS[TOOL_NAMES.jiraGetIssue],
   }, async (params, runCtx): Promise<ToolResult> => {
-    if (!issueService) return { error: "Jira not connected" };
-    return handleJiraGetIssue(params, runCtx, issueService);
+    const svc = services;
+    if (!svc) return { error: "Jira not connected" };
+    return handleJiraGetIssue(params, runCtx, svc.issues);
   });
 
   ctx.tools.register(TOOL_NAMES.jiraCreateIssue, {
     displayName: "Jira Create Issue",
     description: "Create a new Jira issue.",
-    parametersSchema: { type: "object", properties: { projectKey: { type: "string" }, summary: { type: "string" }, issueType: { type: "string" } }, required: ["projectKey", "summary", "issueType"] },
+    parametersSchema: TOOL_SCHEMAS[TOOL_NAMES.jiraCreateIssue],
   }, async (params, runCtx): Promise<ToolResult> => {
-    if (!issueService) return { error: "Jira not connected" };
-    return handleJiraCreateIssue(params, runCtx, issueService);
+    const svc = services;
+    if (!svc) return { error: "Jira not connected" };
+    return handleJiraCreateIssue(params, runCtx, svc.issues);
   });
 
   ctx.tools.register(TOOL_NAMES.jiraUpdateIssue, {
     displayName: "Jira Update Issue",
     description: "Update fields on an existing Jira issue.",
-    parametersSchema: { type: "object", properties: { issueIdOrKey: { type: "string" } }, required: ["issueIdOrKey"] },
+    parametersSchema: TOOL_SCHEMAS[TOOL_NAMES.jiraUpdateIssue],
   }, async (params, runCtx): Promise<ToolResult> => {
-    if (!issueService) return { error: "Jira not connected" };
-    return handleJiraUpdateIssue(params, runCtx, issueService);
+    const svc = services;
+    if (!svc) return { error: "Jira not connected" };
+    return handleJiraUpdateIssue(params, runCtx, svc.issues);
   });
 
   ctx.tools.register(TOOL_NAMES.jiraTransitionIssue, {
     displayName: "Jira Transition Issue",
     description: "Execute a workflow transition.",
-    parametersSchema: { type: "object", properties: { issueIdOrKey: { type: "string" }, transitionId: { type: "string" } }, required: ["issueIdOrKey", "transitionId"] },
+    parametersSchema: TOOL_SCHEMAS[TOOL_NAMES.jiraTransitionIssue],
   }, async (params, runCtx): Promise<ToolResult> => {
-    if (!issueService) return { error: "Jira not connected" };
-    return handleJiraTransitionIssue(params, runCtx, issueService);
+    const svc = services;
+    if (!svc) return { error: "Jira not connected" };
+    return handleJiraTransitionIssue(params, runCtx, svc.issues);
   });
 
   ctx.tools.register(TOOL_NAMES.jiraAddComment, {
     displayName: "Jira Add Comment",
     description: "Add a comment to a Jira issue.",
-    parametersSchema: { type: "object", properties: { issueIdOrKey: { type: "string" }, body: { type: "string" } }, required: ["issueIdOrKey", "body"] },
+    parametersSchema: TOOL_SCHEMAS[TOOL_NAMES.jiraAddComment],
   }, async (params, runCtx): Promise<ToolResult> => {
-    if (!issueService) return { error: "Jira not connected" };
-    return handleJiraAddComment(params, runCtx, issueService);
+    const svc = services;
+    if (!svc) return { error: "Jira not connected" };
+    return handleJiraAddComment(params, runCtx, svc.issues);
   });
 
   ctx.tools.register(TOOL_NAMES.jiraListProjects, {
     displayName: "Jira List Projects",
     description: "List Jira projects.",
-    parametersSchema: { type: "object", properties: {} },
+    parametersSchema: TOOL_SCHEMAS[TOOL_NAMES.jiraListProjects],
   }, async (params, runCtx): Promise<ToolResult> => {
-    if (!projectService) return { error: "Jira not connected" };
-    return handleJiraListProjects(params, runCtx, projectService);
+    const svc = services;
+    if (!svc) return { error: "Jira not connected" };
+    return handleJiraListProjects(params, runCtx, svc.projects);
   });
 
   ctx.tools.register(TOOL_NAMES.jiraGetProject, {
     displayName: "Jira Get Project",
     description: "Get a Jira project by ID or key.",
-    parametersSchema: { type: "object", properties: { projectIdOrKey: { type: "string" } }, required: ["projectIdOrKey"] },
+    parametersSchema: TOOL_SCHEMAS[TOOL_NAMES.jiraGetProject],
   }, async (params, runCtx): Promise<ToolResult> => {
-    if (!projectService) return { error: "Jira not connected" };
-    return handleJiraGetProject(params, runCtx, projectService);
+    const svc = services;
+    if (!svc) return { error: "Jira not connected" };
+    return handleJiraGetProject(params, runCtx, svc.projects);
   });
 
   ctx.tools.register(TOOL_NAMES.jiraListBoards, {
     displayName: "Jira List Boards",
     description: "List Jira boards.",
-    parametersSchema: { type: "object", properties: {} },
+    parametersSchema: TOOL_SCHEMAS[TOOL_NAMES.jiraListBoards],
   }, async (params, runCtx): Promise<ToolResult> => {
-    if (!boardService) return { error: "Boards not enabled" };
-    return handleJiraListBoards(params, runCtx, boardService);
+    const svc = services;
+    if (!svc?.boards) return { error: "Boards not enabled" };
+    return handleJiraListBoards(params, runCtx, svc.boards);
   });
 
   ctx.tools.register(TOOL_NAMES.jiraGetSprint, {
     displayName: "Jira Get Sprints",
     description: "List sprints for a board.",
-    parametersSchema: { type: "object", properties: { boardId: { type: "number" } }, required: ["boardId"] },
+    parametersSchema: TOOL_SCHEMAS[TOOL_NAMES.jiraGetSprint],
   }, async (params, runCtx): Promise<ToolResult> => {
-    if (!sprintService) return { error: "Sprints not enabled" };
-    return handleJiraGetSprint(params, runCtx, sprintService);
+    const svc = services;
+    if (!svc?.sprints) return { error: "Sprints not enabled" };
+    return handleJiraGetSprint(params, runCtx, svc.sprints);
   });
 
   ctx.tools.register(TOOL_NAMES.jiraMoveToSprint, {
     displayName: "Jira Move to Sprint",
     description: "Move issues to a sprint.",
-    parametersSchema: { type: "object", properties: { sprintId: { type: "number" }, issueIds: { type: "array", items: { type: "string" } } }, required: ["sprintId", "issueIds"] },
+    parametersSchema: TOOL_SCHEMAS[TOOL_NAMES.jiraMoveToSprint],
   }, async (params, runCtx): Promise<ToolResult> => {
-    if (!sprintService) return { error: "Sprints not enabled" };
-    return handleJiraMoveToSprint(params, runCtx, sprintService);
+    const svc = services;
+    if (!svc?.sprints) return { error: "Sprints not enabled" };
+    return handleJiraMoveToSprint(params, runCtx, svc.sprints);
   });
 
   ctx.tools.register(TOOL_NAMES.jiraAssignIssue, {
     displayName: "Jira Assign Issue",
     description: "Assign or unassign a Jira issue.",
-    parametersSchema: { type: "object", properties: { issueIdOrKey: { type: "string" } }, required: ["issueIdOrKey"] },
+    parametersSchema: TOOL_SCHEMAS[TOOL_NAMES.jiraAssignIssue],
   }, async (params, runCtx): Promise<ToolResult> => {
-    if (!issueService) return { error: "Jira not connected" };
-    return handleJiraAssignIssue(params, runCtx, issueService);
+    const svc = services;
+    if (!svc) return { error: "Jira not connected" };
+    return handleJiraAssignIssue(params, runCtx, svc.issues);
   });
 
   ctx.tools.register(TOOL_NAMES.jiraLinkIssues, {
     displayName: "Jira Link Issues",
     description: "Create a link between two issues.",
-    parametersSchema: { type: "object", properties: { inwardIssue: { type: "string" }, outwardIssue: { type: "string" }, linkType: { type: "string" } }, required: ["inwardIssue", "outwardIssue", "linkType"] },
+    parametersSchema: TOOL_SCHEMAS[TOOL_NAMES.jiraLinkIssues],
   }, async (params, runCtx): Promise<ToolResult> => {
-    if (!issueService) return { error: "Jira not connected" };
-    return handleJiraLinkIssues(params, runCtx, issueService);
+    const svc = services;
+    if (!svc) return { error: "Jira not connected" };
+    return handleJiraLinkIssues(params, runCtx, svc.issues);
   });
 
   ctx.tools.register(TOOL_NAMES.jiraListTransitions, {
     displayName: "Jira List Transitions",
     description: "List available transitions for an issue.",
-    parametersSchema: { type: "object", properties: { issueIdOrKey: { type: "string" } }, required: ["issueIdOrKey"] },
+    parametersSchema: TOOL_SCHEMAS[TOOL_NAMES.jiraListTransitions],
   }, async (params, runCtx): Promise<ToolResult> => {
-    if (!issueService) return { error: "Jira not connected" };
-    return handleJiraListTransitions(params, runCtx, issueService);
+    const svc = services;
+    if (!svc) return { error: "Jira not connected" };
+    return handleJiraListTransitions(params, runCtx, svc.issues);
   });
 
   ctx.tools.register(TOOL_NAMES.jiraGetUser, {
     displayName: "Jira Get User",
     description: "Look up a Jira user.",
-    parametersSchema: { type: "object", properties: { accountId: { type: "string" }, emailAddress: { type: "string" } } },
+    parametersSchema: TOOL_SCHEMAS[TOOL_NAMES.jiraGetUser],
   }, async (params, runCtx): Promise<ToolResult> => {
-    if (!userService) return { error: "Jira not connected" };
-    return handleJiraGetUser(params, runCtx, userService);
+    const svc = services;
+    if (!svc) return { error: "Jira not connected" };
+    return handleJiraGetUser(params, runCtx, svc.users);
   });
 }
 
@@ -670,7 +701,7 @@ const plugin: PaperclipPlugin = definePlugin({
     pluginCtx = ctx;
     const config = await getConfig(ctx);
 
-    initServices(ctx, config);
+    services = await buildContainer(ctx, config);
 
     await registerEventHandlers(ctx);
     await registerJobs(ctx);
@@ -718,7 +749,7 @@ const plugin: PaperclipPlugin = definePlugin({
   async onConfigChanged() {
     if (!pluginCtx) return;
     const config = await getConfig(pluginCtx);
-    await initServices(pluginCtx, config);
+    services = await buildContainer(pluginCtx, config);
     pluginCtx.logger.info("Jira config updated — services reinitialized");
   },
 

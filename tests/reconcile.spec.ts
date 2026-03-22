@@ -38,7 +38,10 @@ function createMockContext(overrides?: Record<string, unknown>) {
       get: vi.fn().mockResolvedValue(null),
       update: vi.fn().mockResolvedValue(undefined),
     },
-    state: { set: vi.fn().mockResolvedValue(undefined) },
+    state: {
+      get: vi.fn().mockResolvedValue(null),
+      set: vi.fn().mockResolvedValue(undefined),
+    },
     ...overrides,
   } as any;
 }
