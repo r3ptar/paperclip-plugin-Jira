@@ -184,7 +184,8 @@ async function handleIssueCreated(
     title: issue.fields.summary,
     status: "pending",
     data: {
-      issueKey: issue.key,
+      jiraIssueId: issue.id,
+      jiraIssueKey: issue.key,
       projectKey: issue.fields.project.key,
       jiraStatus: issue.fields.status.name,
       jiraStatusCategory: issue.fields.status.statusCategory?.key ?? null,
@@ -192,6 +193,7 @@ async function handleIssueCreated(
       priority: issue.fields.priority?.name ?? null,
       labels: issue.fields.labels ?? [],
       lastWebhookAt: new Date().toISOString(),
+      lastChangelogId: null,
     },
   });
 }
@@ -387,7 +389,8 @@ async function upsertEntityTracking(
     title: issue.fields.summary,
     status: "synced",
     data: {
-      issueKey: issue.key,
+      jiraIssueId: issue.id,
+      jiraIssueKey: issue.key,
       projectKey: issue.fields.project.key,
       jiraStatus: issue.fields.status.name,
       jiraStatusCategory: issue.fields.status.statusCategory?.key ?? null,

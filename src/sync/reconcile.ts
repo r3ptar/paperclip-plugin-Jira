@@ -125,9 +125,10 @@ export class ReconciliationService {
       }) as string | null;
 
       if (lastReconcileAt) {
-        // Jira JQL date format: "yyyy-MM-dd HH:mm"
-        const since = new Date(lastReconcileAt);
-        const jqlDate = `${since.getFullYear()}-${String(since.getMonth() + 1).padStart(2, "0")}-${String(since.getDate()).padStart(2, "0")} ${String(since.getHours()).padStart(2, "0")}:${String(since.getMinutes()).padStart(2, "0")}`;
+        // Subtract 5 minutes as safety margin for clock skew between worker and Jira
+        const since = new Date(new Date(lastReconcileAt).getTime() - 5 * 60 * 1000);
+        // Use UTC to avoid timezone mismatches. Jira JQL format: "yyyy-MM-dd HH:mm"
+        const jqlDate = `${since.getUTCFullYear()}-${String(since.getUTCMonth() + 1).padStart(2, "0")}-${String(since.getUTCDate()).padStart(2, "0")} ${String(since.getUTCHours()).padStart(2, "0")}:${String(since.getUTCMinutes()).padStart(2, "0")}`;
         jql = `(${this.config.syncJql}) AND updated >= "${jqlDate}"`;
         this.ctx.logger.info("Incremental reconciliation", { since: jqlDate });
       }
@@ -175,8 +176,11 @@ export class ReconciliationService {
       }
 
       // 3b. Tracked but no longer in Jira scope (deleted/removed) — mark as out-of-scope
+      // Only run on full reconciliation — incremental JQL only returns recently-updated
+      // issues, so missing keys are expected (they just weren't modified recently).
+      const isIncremental = Boolean(lastReconcileAt);
       for (const [trackedKey, tracked] of entityByJiraKey) {
-        if (!jiraIssuesByKey.has(trackedKey)) {
+        if (!isIncremental && !jiraIssuesByKey.has(trackedKey)) {
           result.deleted += 1;
           try {
             await this.ctx.entities.upsert({

@@ -146,7 +146,7 @@ async function buildContainer(
     ? new JiraSprintService(ctx, client)
     : null;
 
-  return {
+  return Object.freeze({
     tokenManager,
     client,
     identity,
@@ -156,7 +156,7 @@ async function buildContainer(
     users,
     boards,
     sprints,
-  };
+  });
 }
 
 // buildAuthConfig is sync — for OAuth2, the refresh token is resolved
@@ -514,8 +514,19 @@ async function registerActionHandlers(ctx: PluginContext): Promise<void> {
 
     // Validate required fields
     const errors: string[] = [];
-    if (sanitized.baseUrl && typeof sanitized.baseUrl !== "string") {
-      errors.push("baseUrl must be a string");
+    if (sanitized.baseUrl) {
+      if (typeof sanitized.baseUrl !== "string") {
+        errors.push("baseUrl must be a string");
+      } else {
+        try {
+          const parsed = new URL(sanitized.baseUrl);
+          if (!["https:", "http:"].includes(parsed.protocol)) {
+            errors.push("baseUrl must use https:// or http://");
+          }
+        } catch {
+          errors.push("baseUrl must be a valid URL");
+        }
+      }
     }
     if (sanitized.deploymentMode && !["cloud", "server", "datacenter"].includes(sanitized.deploymentMode as string)) {
       errors.push("deploymentMode must be cloud, server, or datacenter");
@@ -531,7 +542,9 @@ async function registerActionHandlers(ctx: PluginContext): Promise<void> {
       return { ok: false, errors };
     }
 
-    const merged = { ...DEFAULT_CONFIG, ...sanitized } as JiraConfig;
+    // Merge with existing config to preserve fields not included in this save
+    const existing = await getConfig(ctx);
+    const merged = { ...existing, ...sanitized } as JiraConfig;
 
     await ctx.state.set({ scopeKind: "instance", stateKey: "plugin-config" }, merged);
     services = await buildContainer(ctx, merged);

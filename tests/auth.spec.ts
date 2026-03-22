@@ -128,7 +128,7 @@ describe("ApiTokenManager", () => {
     const health = await manager.healthCheck();
     expect(health).toEqual({ ok: true });
     expect(mockFetch).toHaveBeenCalledWith(
-      expect.stringContaining("/rest/api/3/myself"),
+      expect.stringContaining("/rest/api/2/myself"),
       expect.objectContaining({ method: "GET" }),
     );
 

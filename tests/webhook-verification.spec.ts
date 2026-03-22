@@ -243,7 +243,8 @@ describe("handleJiraIssueWebhook — jira:issue_created", () => {
         title: "Test issue",
         status: "pending",
         data: expect.objectContaining({
-          issueKey: "PROJ-1",
+          jiraIssueId: "10001",
+          jiraIssueKey: "PROJ-1",
           projectKey: "PROJ",
           jiraStatus: "To Do",
         }),

@@ -170,7 +170,8 @@ export class ApiTokenManager implements TokenManager {
     try {
       const token = await this.forceRefresh();
       // Make a real API call to verify the credential works
-      const url = `${this.config.siteUrl}/rest/api/3/myself`;
+      // Use /rest/api/2 which works on both Cloud and Server/DC
+      const url = `${this.config.siteUrl}/rest/api/2/myself`;
       const res = await fetch(url, {
         method: "GET",
         headers: { Authorization: this.buildAuthHeader(token), Accept: "application/json" },
