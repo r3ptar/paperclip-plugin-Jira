@@ -22,7 +22,7 @@ Build output: `dist/manifest.js`, `dist/worker.js`, `dist/ui/index.js`
 
 ## Architecture
 
-This is a **Paperclip Plugin SDK v2** plugin. The SDK provides `definePlugin()`, `runWorker()`, and typed registries for tools, webhooks, jobs, UI slots, and config schemas.
+This is a **Paperclip Plugin SDK** plugin. The SDK provides `definePlugin()`, `runWorker()`, and typed registries for tools, webhooks, jobs, UI slots, and config schemas.
 
 ### Key Layers
 
@@ -97,7 +97,7 @@ All implementation phases are complete. The agent assignments below remain usefu
 
 - **Language:** TypeScript
 - **Frontend:** React (UI components bundled with esbuild)
-- **Backend/Runtime:** Node.js (Paperclip Plugin SDK v2 worker)
+- **Backend/Runtime:** Node.js (Paperclip Plugin SDK worker)
 - **Build:** esbuild (UI), tsc (TypeScript compilation)
 - **Test:** Vitest
 - **API Integration:** Jira REST API v2/v3, Jira Agile API 1.0

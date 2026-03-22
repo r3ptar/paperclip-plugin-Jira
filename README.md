@@ -1,6 +1,6 @@
 # @paperclipai/plugin-jira
 
-Paperclip Plugin SDK v2 integration for Jira -- bidirectional issue sync, workflow transitions, boards, sprints, and 15 agent tools. Supports Jira Cloud, Server, and Data Center.
+Paperclip Plugin SDK integration for Jira -- bidirectional issue sync, workflow transitions, boards, sprints, and 15 agent tools. Supports Jira Cloud, Server, and Data Center.
 
 ## Features
 
